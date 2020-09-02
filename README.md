@@ -21,6 +21,6 @@ for those who have trouble running locally, it's recommended you use colab. You 
 - Click on github and type the notebook url, for example https://github.com/qchenclaire/computer-vision-fall-2020/blob/master/week1/(Week%201)%20Images%20and%20Basic%20Image%20Manipulation.ipynb
 - If you need to upload your file from your laptop, click the 'folder' icon on the left.
 
-##Note to students
+## Note to students
 
 Please follow the code of conduct and do not make your edited version visible to others. If you want to folk this repository, please consider [mirroring](https://docs.github.com/en/github/creating-cloning-and-archiving-repositories/duplicating-a-repository) it.
