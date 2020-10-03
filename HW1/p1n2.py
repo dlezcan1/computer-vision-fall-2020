@@ -160,7 +160,8 @@ def main(argv):
   cv2.imwrite('output/' + img_name + "_binary.png", binary_image)
 
   labeled_image = label(binary_image)
-  cv2.imwrite('output/' + img_name + "_labeled.png", labeled_image)
+  num = np.unique(labeled_image).max()
+  cv2.imwrite('output/' + img_name + "_labeled.png", labeled_image*255//num)
 
   attribute_list = get_attribute(labeled_image)
   print('attribute list:')
@@ -179,7 +180,7 @@ def main(argv):
   print('edge attribute list:')
   print(edge_attribute_list)
 
-  attributed_edge_image = draw_attributes(img, edge_attribute_list)
+  attributed_edge_image = draw_edge_attributes(img, edge_attribute_list)
   cv2.imwrite("output/" + img_name + "_edge_attributes.png", attributed_edge_image)
 
   # extra credits for part 2: show your circle attributes and plot circles
