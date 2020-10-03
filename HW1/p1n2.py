@@ -133,19 +133,6 @@ def get_circle_attribute(labeled_image, edge_image):
     # extra credits
     raise NotImplementedError  #TODO
 
-
-def detect_objects(attribute_list, edge_attribute_list):
-    '''
-    feel free to edit the input format
-    Args:
-        attribute_list:
-        edge_attribute_list:
-
-    Returns:
-
-    '''
-    raise NotImplementedError  # TODO
-
 def main(argv):
   img_name = argv[0]
   thresh_val = int(argv[1])
@@ -188,9 +175,6 @@ def main(argv):
   # attributed_circle_image = draw_circle_attributes(img, circle_attribute_list)
   # cv2.imwrite("output/" + img_name + "_circle_attributes.png", attributed_circle_image)
 
-  # part 3
-  objects = detect_objects(attribute_list, edge_attribute_list)
-  print(objects)
 if __name__ == '__main__':
   main(sys.argv[1:])
 # example usage: python p1n2.py two_objects 128
