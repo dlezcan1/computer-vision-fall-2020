@@ -1,5 +1,6 @@
 */.ipynb_checkpoints/
 .project
- 
+.pydevproject
+
 # ignore the python venv
 python3-cv/
