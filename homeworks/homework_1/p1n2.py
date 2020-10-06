@@ -3,6 +3,8 @@ import cv2
 import numpy as np
 import sys
 from scipy.ndimage import gaussian_filter
+from scipy.signal import convolve2d
+import matplotlib.pyplot as plt
 
 
 def binarize( gray_image, thresh_val ):
@@ -82,15 +84,15 @@ def measure_second_moment( binary_image, com ):
             
     """
     # ensure binary_image is max value of one
-    binary_img = ( binary_image > 0 ).astype( np.uint8 )
+    binary_img = ( binary_image > 0 ).astype( int )
     
     # extract com
     x_com = com['x']
     y_com = com['y']
     
     # get the X and Y grid
-    x_range = np.arange( binary_img.shape[1] )
-    y_range = np.arange( binary_img.shape[0] )
+    x_range = np.arange( binary_img.shape[1] , dtype = np.int64 )
+    y_range = np.arange( binary_img.shape[0] , dtype = np.int64 )
     X, Y = np.meshgrid( x_range, y_range )
     
     # push the center of mass to the origin
@@ -107,7 +109,7 @@ def measure_second_moment( binary_image, com ):
     theta_2 = theta_1 + np.pi / 2
     
     # calculate roundedness
-    E = lambda th: I_xx * np.sin( th ) ** 2 - I_xy * np.cos( th ) * np.sin( th ) + I_yy * np.cos( th ) ** 2
+    E = lambda th: I_xx * np.sin( th ) ** 2 - I_xy * np.sin( th ) * np.cos( th ) + I_yy * np.cos( th ) ** 2
     
     roundedness = E( theta_1 ) / E( theta_2 )  # E_min/E_max
     
@@ -161,7 +163,7 @@ def draw_attributes( image, attribute_list ):
     for attribute in attribute_list:
         center_x = ( int )( attribute["position"]["x"] )
         center_y = ( int )( attribute["position"]["y"] )
-        slope = np.tan( attribute["orientation"] )
+        slope = np.tan( np.pi - attribute["orientation"] )  # fixed orientation for y-axis inversion
 
         cv2.circle( attributed_image, ( center_x, center_y ), 2, ( 0, 255, 0 ), 2 )
         cv2.line( 
@@ -183,7 +185,72 @@ def draw_attributes( image, attribute_list ):
 # draw_attributes
 
 
-def detect_edges( image, sigma, threshold, lo_thresh = np.inf ):
+def nonmax_suppress( d_image_x, d_image_y ):
+    ''' Perofrm non-maximum suppression''' 
+    # get the image magnitude and direction
+    d_image_mag = np.sqrt( d_image_x ** 2 + d_image_y ** 2 )
+    d_image_dir = np.rad2deg( np.arctan2( d_image_y, d_image_x ) )
+    
+    # bin the image direction
+    d_image_dir_binned = np.zeros_like( d_image_dir, dtype = int )
+    for angle in range( 0, 180, 45 ):
+        angle2 = angle - 180 
+        angle3 = angle + 180
+        mask_angle = ( angle - 22.5 <= d_image_dir ) & ( d_image_dir < angle + 22.5 )
+        mask_angle2 = ( angle2 - 22.5 <= d_image_dir ) & ( d_image_dir < angle2 + 22.5 )
+        mask_angle3 = ( angle3 - 22.5 <= d_image_dir ) & ( d_image_dir < angle3 + 22.5 )
+        mask = mask_angle | mask_angle2 | mask_angle3
+        
+        d_image_dir_binned[mask] = angle
+        
+    # for
+    
+    ( I, J ) = np.nonzero( d_image_mag )
+    
+    # iterate over non-zero values
+    output_img = np.zeros_like( d_image_mag )
+    for i, j in zip( I, J ):
+        # skip the boundary
+        if ( i < 1 ) or ( i >= d_image_mag.shape[0] - 1 ): 
+            continue
+        
+        if ( j < 1 ) or ( j >= d_image_mag.shape[1] - 1 ): 
+            continue
+        
+        # grab the angle
+        angle = d_image_dir_binned[i, j]
+        
+        # collect values to check
+        if angle == 0:  # x-axis
+            check_values = [d_image_mag[i, j + l] for l in range( -1, 1 + 1 ) if l != 0]
+            
+        elif angle == 45:  # along y = x
+            check_values = [d_image_mag[i + l, j + l] for l in range( -1, 1 + 1 ) if l != 0] 
+
+        elif angle == 90:  # along y-axis
+            check_values = [d_image_mag[i + l, j] for l in range( -1, 1 + 1 ) if l != 0]
+            
+        else:  # along y = -x
+            check_values = [d_image_mag[i + l, j - l] for l in range( -1, 1 + 1 ) if l != 0]
+        
+        # nms
+        
+        if np.max( check_values ) <= d_image_mag[i, j]:
+            output_img[i, j] = d_image_mag[i, j] 
+            
+        # if
+        
+        else:
+            output_img[i, j] = 0
+        
+    # for
+    
+    return output_img
+            
+# nonmax_suppress
+
+
+def detect_edges( image, sigma, threshold, lo_thresh = np.inf, nms = False ):
     """Find edge points in a grayscale image.
     
     Args:
@@ -197,62 +264,19 @@ def detect_edges( image, sigma, threshold, lo_thresh = np.inf ):
     """
 
     # get the derivative of the images    
-    d_image_x = gaussian_filter( image, ( 0, sigma ), order = 1 )
-    d_image_y = gaussian_filter( image, ( sigma, 0 ), order = 1 )
-    d_image_mag = np.sqrt( d_image_x ** 2 + d_image_y ** 2 )
+    sobel_x = np.array( [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]] )
+    sobel_y = sobel_x.T
+    blurred_image = gaussian_filter( image, sigma, order = 0 )
+    d_image_x = convolve2d( blurred_image, sobel_x, 'same' )
+    d_image_y = convolve2d( blurred_image, sobel_y, 'same' )
     
     # perform non-maximal suppression
-    # # get the gradient raw directions
-    d_image_dir = np.rad2deg( np.arctan2( d_image_y, d_image_x ) )
-    d_image_dir_binned = np.zeros_like( d_image_dir, dtype = int )
-    
-    angles = list( range( 0, 180, 45 ) )
-    for i, angle in enumerate( angles ):
-        # bin the angles for the positive and negative directions
-        mask_pos = ( angle - 22.5 <= d_image_dir ) & ( d_image_dir < angle + 22.5 )
-        mask_neg = ( angle + 180 - 22.5 <= d_image_dir ) & ( d_image_dir < angle + 180 + 22.5 )
-        mask = mask_pos | mask_neg
+    if nms:
+        d_image_mag = nonmax_suppress( d_image_x, d_image_y )
         
-        # bin the angles [0 -> 0, 45 -> 1, 90 -> 2, 135 -> 3]
-        d_image_dir_binned[mask] = i
-        
-    # for
+    else:
+        d_image_mag = np.sqrt( d_image_x ** 2 + d_image_y ** 2 )
     
-    # # perform the non-maximal suppresion using for loops
-    for i in range( 1, d_image_mag.shape[0] - 1 ):
-        for j in range( 1, d_image_mag.shape[1] - 1 ):
-            # gradient direction (binned)
-            angle = angles[d_image_dir_binned[i, j]]
-            
-            if angle == 0:
-                check_values = d_image_mag[i, j - 1:j + 2]
-            
-            # if    
-            
-            elif angle == 45:
-                check_values = [d_image_mag[i - 1, j - 1], d_image_mag[i, j], d_image_mag[i + 1, j + 1]]
-                
-            # elif
-            
-            elif angle == 90:
-                check_values = d_image_mag[i - 1:i + 2, j]
-                
-            # elif
-            
-            else:  # angle == 135
-                check_values = [d_image_mag[i + 1, j - 1], d_image_mag[i, j], d_image_mag[i - 1, j + 1]]
-                
-            # else
-         
-            # suppress non-maximums
-            if not ( np.max( check_values ) == d_image_mag[i, j] ):
-                d_image_mag[i, j] = 0
-                
-            # if
-            
-        # for
-    # for
-            
     # hysteresis thresholding
     # # get the definitive edges
     edge_image = ( d_image_mag >= threshold ).astype( np.uint8 )
@@ -319,7 +343,7 @@ def get_edge_attribute( labeled_image, edge_image ):
         lbl_edges = 255 * np.logical_and( labeled_image == lbl, edge_image ).astype( np.uint8 )
         
         # get the Hough Transform for lines
-        lines = cv2.HoughLines( lbl_edges, 2, np.pi / 36, 45 )
+        lines = cv2.HoughLines( lbl_edges, 2, np.pi / 180, 35 )
         if isinstance( lines, type( None ) ):
             continue
  
@@ -420,8 +444,8 @@ def get_circle_attribute( labeled_image, edge_image ):
         lbl_edges = 255 * np.logical_and( labeled_image == lbl, edge_image ).astype( np.uint8 )
         
         # perform the hough transform
-        circles = cv2.HoughCircles( lbl_edges, cv2.HOUGH_GRADIENT, 1, 30,
-                                   param1 = 50, param2 = 30,
+        circles = cv2.HoughCircles( lbl_edges, cv2.HOUGH_GRADIENT, 2, 20,
+                                   param1 = 50, param2 = 60,
                                    minRadius = 0, maxRadius = 0 )
         if isinstance( circles, type( None ) ):
             continue
@@ -481,7 +505,7 @@ def main( argv ):
     
     # part 2
     # feel free to tune hyperparameters or use double-threshold
-    edge_image = detect_edges( gray_image, sigma = 1, threshold = 10, lo_thresh = 4 )
+    edge_image = detect_edges( gray_image, sigma = 1, threshold = 18, lo_thresh = 8 , nms = True )
     cv2.imwrite( "output/" + img_name + "_edges.png", edge_image )
     
     edge_attribute_list = get_edge_attribute( labeled_image, edge_image )
@@ -637,6 +661,26 @@ if __name__ == '__main__':
     
     # module testing
 #     debug( sys.argv[1:] )
+
+#     a = np.hstack( ( np.zeros( ( 100, 50 ) ) , np.ones( ( 100, 20 ) ), np.zeros( ( 100, 50 ) ) ) ).astype( np.uint8 )
+#     a *= 255
+#      
+#     plt.figure( 1 )
+#     plt.imshow( a, cmap = 'gray' )
+#      
+#     a_edge = detect_edges( a, 1, 10, 4, False )
+#     plt.figure( 2 )
+#     plt.imshow( a_edge, cmap = 'gray' )
+#      
+#     a_edge_nms = detect_edges( a, 1, 10, 4, True )
+#     plt.figure( 3 )
+#     plt.imshow( a_edge_nms, cmap = 'gray' )
+#      
+#     a_canny = cv2.Canny( a, 4, 10, 1 )
+#     plt.figure( 4 )
+#     plt.imshow( a_canny, cmap = 'gray' )
+#      
+#     plt.show()
     
 # if
     

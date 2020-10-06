@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
 import cv2
 from p1n2 import *  
-import os
+import os, glob
+from numpy import shape
+from builtins import enumerate
+
+# object database
+train_file_list = ['train/circle1.png', 'train/circle2.png', 'train/oval1.png',
+                   'train/oval2.png', 'train/pacMan.png', 'train/parallelogram.png',
+                   'train/pentagon.png', 'train/rectangle1.png', 'train/rectangle2.png',
+                   'train/rhombus.png', 'train/square1.png', 'train/square2.png',
+                   'train/trapezoid.png', 'train/triangle1.png', 'train/triangle2.png']
 
 
 def combine_attribute_lists( shape_attribute, edge_attribute, circle_attribute ):
@@ -29,6 +38,15 @@ def combine_attribute_lists( shape_attribute, edge_attribute, circle_attribute )
     
     attribute_list = []
     for shape_attr, edge_attr, circle_attr in zip( shape_attribute, edge_attribute, circle_attribute ):
+        if edge_attr == None:
+            edge_attr = []
+            
+        # if
+        
+        if circle_attr == None:
+            circle_attr = []
+            
+        # if
         attribute = {'shape': shape_attr, 'edge': edge_attr, 'circle': circle_attr}
         
         # append the attribute
@@ -41,58 +59,155 @@ def combine_attribute_lists( shape_attribute, edge_attribute, circle_attribute )
 # combine_attribute_lists
 
 
-def create_feature_vector( attribute ):
-    """ NOT GOING TO WORK! Function that accepts an attribute dictionary to turn it into a feature vector
+def compare_image_to_template( test_img_attr, template_attr ):
+    ''' Function to score the similarity between test_img and template'''
+    # grab the object orientations and roundedness
+    test_orient = test_img_attr['shape']['orientation']
+    template_orient = template_attr['shape']['orientation']
+    
+    test_round = test_img_attr['shape']['roundedness']
+    template_round = template_attr['shape']['roundedness']
+    
+    # compute roundedness score
+    round_score = 1 - np.abs( test_round - template_round )
+    
+    # compute edge score
+    num_edge_test = len( test_img_attr['edge'] )
+    num_edge_template = len( template_attr['edge'] )
+    
+    if num_edge_test == num_edge_template == 0:  # no edges detected
+        edge_score = 1.0  # perfect score
+        
+    # if
+    
+    elif ( num_edge_test == 0 ) or ( num_edge_template == 0 ):  # xor @ this point
+        edge_score = 0.0  # no edges measured
+        
+    # elif
+        
+    else:  # they are non-zero, but not necessarily the same
+        # num_match_score
+#         num_edge_score = max( 1 - np.abs( num_edge_test - num_edge_template ) / num_edge_template, 0.5 )  # num edges unreliable
+        num_edge_score = max( 1 - np.abs( num_edge_test - num_edge_template ) / num_edge_template, 0 )  
+        
+        # reorient the edges with respect to their 2nd moment orientation
+        edge_test_orient = np.zeros( len( test_img_attr['edge'] ) ).tolist()
+        edge_template_orient = np.zeros( len( template_attr['edge'] ) ).tolist()
+        for i, edge in enumerate( test_img_attr['edge'] ):
+            edge_test_orient[i] = edge['angle'] - test_orient
+            
+        # for
+        
+        for i, edge in enumerate( template_attr['edge'] ):
+            edge_template_orient[i] = edge['angle'] - template_orient
+            
+        # for
+        
+        # only calculate based on minimum number of matches
+        n_match_edges = min( num_edge_test, num_edge_template )
+        cos_sim = lambda  x, y : np.dot( x[:n_match_edges], y[:n_match_edges] ) / ( 
+            np.linalg.norm( x[:n_match_edges] ) * np.linalg.norm( y[:n_match_edges] ) )  # cosine similarity
+
+        # edge align score
+        # # start with initial alignment
+        align_edge_score = 1 / 2 + cos_sim( edge_test_orient, edge_template_orient ) / 2
+        
+        # # compute over all alignments over permutations of test score 
+        for k in range( n_match_edges - num_edge_test ):
+            # rotate test vector and compute score
+            rot_edge_test_orient = edge_test_orient[-k:] + edge_test_orient[:-k]
+            rot_edge_test_score = 1 / 2 + cos_sim( rot_edge_test_orient, edge_template_orient ) / 2
+            
+            # keep the best score
+            align_edge_score = max( align_edge_score, rot_edge_test_score )
+        
+        # for
+        
+        # compute edge score
+        edge_score = num_edge_score * 1
+        
+    # else
+    
+    # compute circle score ( no radius b/c there could be scaling effects )
+    num_circle_test = len( test_img_attr['circle'] )
+    num_circle_template = len( template_attr['circle'] )
+    
+    if num_circle_test == num_circle_template:  # same num of circles detected
+        circle_score = round_score  # double weight the roundedness of the obj
+        
+    # if
+    
+    elif num_circle_template == 0:  # no template circles, but test circles
+        circle_score = 0.0  # no edges measured
+        
+    # elif
+    
+    else:  # at least 1 template circle
+        circle_score = round_score * ( 1 - np.abs( num_circle_test - num_circle_template ) / num_circle_template )
+        
+    # else
+    
+    # find the mean of the scores
+    score = np.mean( [round_score, edge_score, circle_score] )  # typical average
+    
+    return score
+    
+# compare_images
+
+
+def get_all_attributes( object_img, threshold ):
+    ''' Function to get all of the attributes from the object file
     
     Args:
-        attribute: a dict of keys:
-                        'shape', 'edge', 'circle'
-                        
+        object_file: an image file to get the file from
+        threshold:   the threshold for the binarization 
+        
     Returns:
-        a numpy array of features ['shape', 'edge', 'circle']
-            [com_x, com_y, orientation, roundedness, 
-            edge_angle (0 if None), edge_distance (0 if None), edge_length (0 if None),
-            circle_center_x (0 if None), circle_center_y (0 if None), circle_radius (0 if None)]
-    """
-    raise NotImplementedError
-    x = np.empty( 10 )
+        A list of attribues in dict form 
+            'shape': shape attributes
+            'edge':  edge attributes
+            'circle': circle attributes
+            
+    '''
+    # get the shape attributes
+    gray_img = cv2.cvtColor( object_img, cv2.COLOR_BGR2GRAY )
+    binary_img = binarize( gray_img, thresh_val = threshold )
+    lbl_img = label( binary_img )
     
-    # add the general shape parameters
-    x[0] = attribute['shape']['position']['x']
-    x[1] = attribute['shape']['position']['y']
-    x[2] = attribute['shape']['orientation']
-    x[3] = attribute['shape']['roundedness']
+    shape_attribute_list = get_attribute( lbl_img )
     
-    # add the edge parameters
-    if isinstance( attribute['edge'], type( None ) ):
-        x[4] = x[5] = x[6] = 0
+    # get the edge attributes
+    edge_img = detect_edges( gray_img, sigma = 1, threshold = 18, lo_thresh = 8 , nms = True )
+    edge_attribute_list = get_edge_attribute( lbl_img, edge_img )
+    
+    # get the circle attributes
+    circle_attribute_list = get_circle_attribute( lbl_img, edge_img )
+    
+    # combine the attribute list
+    attribute_list = combine_attribute_lists( shape_attribute_list,
+                                             edge_attribute_list,
+                                             circle_attribute_list )
+    
+    return attribute_list
+    
+# get_all_attributes
+
+
+def pad_img( img, thickness, pad_val ):
+    ''' Helper function to border the image '''
+    if img.ndim == 3:  # BGR image
+        padding = ( ( thickness, thickness ), ( thickness, thickness ), ( 0, 0 ) )
         
-    # if
-    
     else:
-        x[4] = attribute['edge']['angle']
-        x[5] = attribute['edge']['distance']
-        x[6] = attribute['edge']['length']
+        padding = thickness
         
-    # else
+    # else    
+    pad_img = np.pad( img, padding, constant_values = pad_val )
     
-    # add the circle parameters
-    if isinstance( attribute['circle'], type( None ) ):
-        x[7] = x[8] = x[9] = 0
-        
-    # if
+    return pad_img
     
-    else:
-        x[7] = attribute['circle']['position']['x']
-        x[8] = attribute['circle']['position']['y']
-        x[9] = attribute['circle']['radius']
-        
-    # else
-    
-    return x
-    
-# create_feature_vector
-        
+# pad_img
+
 
 def best_match( object_database, test_object ):
     '''
@@ -106,9 +221,63 @@ def best_match( object_database, test_object ):
         You will need to use functions from p1n2.py
     '''
     # TODO
-    raise NotImplementedError
+    # get the attributes of the test_object
+    test_attributes = get_all_attributes( test_object, 128 ) 
+    
+    print( 'test object attributes' )
+    for lbl, attribute in enumerate( test_attributes ):
+        print( 'label:', lbl )
+        print( 'shape:', attribute['shape'] )
+        print( 'edge ({}):'.format( len( attribute['edge'] ) ), attribute['edge'] )
+        print( 'circle ({}):'.format( len( attribute['circle'] ) ), attribute['circle'] )
+        print()
+        
+    # for
+    print( 75 * '=', end = '\n\n' )
 
+    # gather the attributes of the training images
+    for obj in  object_database :
+        print( obj['name'] )
+        
+        attribute_list = get_all_attributes( obj['image'], 128 )
+        # print out all of the attributes
+        for lbl, attribute in enumerate( attribute_list ):
+            print( 'label:', lbl )
+            print( 'shape:', attribute['shape'] )
+            print( 'edge ({}):'.format( len( attribute['edge'] ) ), attribute['edge'] )
+            print( 'circle ({}):'.format( len( attribute['circle'] ) ), attribute['circle'] )
+            print()
+            
+        # for
+        
+        print( 75 * '=', end = '\n\n' )
+
+        # add the attributes to the database
+        obj['attributes'] = attribute_list[0]
+    
+    # for
+    
+    # gather the scores over objects in the image
     object_names = []
+    for test_obj_attr in test_attributes:
+        db_score = [0] * len( object_database )  # initialize scores
+        
+        # compute the scores over the whole db
+        for i, templ_obj in enumerate( object_database ):
+            db_score[i] = compare_image_to_template( test_obj_attr, templ_obj['attributes'] )
+            
+        # for
+        
+        best_idx = np.argmax( db_score )  # location of best score
+        best_obj_name = object_database[best_idx]['name'].replace( '.png', '' )
+        
+        # format the name
+        best_obj_name = ''.join( [l for l in best_obj_name if l.isalpha()] )  # remove numerics
+        
+        object_names.append( best_obj_name )
+        
+    # for
+    
     return object_names
 
 # best_match
@@ -121,7 +290,8 @@ def main( argv ):
     train_im_names = os.listdir( 'train/' )
     object_database = []
     for train_im_name in train_im_names:
-        train_im = cv2.imread( 'train/' + train_im_name, cv2.IMREAD_COLOR )
+        train_im = cv2.imread( 'train/' + train_im_name )
+        train_im = pad_img( train_im, 5, 0 )
         object_database.append( {'name': train_im_name, 'image':train_im} )
     object_names = best_match( object_database, test_img )
     print( object_names )
