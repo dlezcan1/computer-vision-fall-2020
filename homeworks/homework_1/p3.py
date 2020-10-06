@@ -1,16 +1,7 @@
 #!/usr/bin/env python3
 import cv2
 from p1n2 import *  
-import os, glob
-from numpy import shape
-from builtins import enumerate
-
-# object database
-train_file_list = ['train/circle1.png', 'train/circle2.png', 'train/oval1.png',
-                   'train/oval2.png', 'train/pacMan.png', 'train/parallelogram.png',
-                   'train/pentagon.png', 'train/rectangle1.png', 'train/rectangle2.png',
-                   'train/rhombus.png', 'train/square1.png', 'train/square2.png',
-                   'train/trapezoid.png', 'train/triangle1.png', 'train/triangle2.png']
+import os
 
 
 def combine_attribute_lists( shape_attribute, edge_attribute, circle_attribute ):
