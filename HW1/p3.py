@@ -11,7 +11,8 @@ def best_match(object_database, test_object):
         test_object: test image, a 2D unit8 array
 
     Returns:
-        object_names: a list of filenames from object_database whose patterns match the test image
+        object_names: a list of shapes from object_database whose patterns match the test image.
+        For example, the results for test1.png should be [['oval', (x1,y1)], ['pacMan',(x2,y2)],['rhombus',(x3,y3)]], where (x,y) is the center position of each object.
         You will need to use functions from p1n2.py
     '''
   # TODO
